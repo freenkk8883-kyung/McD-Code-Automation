@@ -12,10 +12,7 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap');
 html, body, [class*="css"] { font-family: 'Noto Sans KR', sans-serif; }
-.hero {
-    background: linear-gradient(135deg, #DA291C 0%, #C0241A 100%);
-    color: white; padding: 2rem 2.5rem; border-radius: 16px; margin-bottom: 2rem;
-}
+.hero { background: linear-gradient(135deg, #DA291C 0%, #C0241A 100%); color: white; padding: 2rem 2.5rem; border-radius: 16px; margin-bottom: 2rem; }
 .hero h1 { margin: 0; font-size: 1.7rem; font-weight: 700; }
 .hero p  { margin: 0.3rem 0 0; font-size: 0.9rem; opacity: 0.85; }
 .card { background: white; border-radius: 12px; padding: 1.5rem; margin-bottom: 1rem; border: 1px solid #EBEBEB; }
@@ -77,10 +74,15 @@ def parse_targeting_lines(raw, target_map):
         results.append({'gender': gender, 'age': age, 'targeting': code, 'note': 'A'})
     return results
 
-def parse_creative_format(raw):
+def parse_creative_combined(raw):
+    """
+    G열 Creative에서 소재명 + 가로세로 + 초수 모두 추출
+    소재명 컬럼(H열)이 없을 때 사용
+    """
     if not raw or raw in ('-', 'nan', ''):
-        return [{'orientation': 'H', 'seconds': ''}]
-    lines = [l.strip() for l in raw.replace('\\n', '\n').split('\n') if l.strip() and l.strip() != '-']
+        return [{'name': '', 'orientation': 'H', 'seconds': ''}]
+    lines = [l.strip() for l in raw.replace('\\n', '\n').split('\n')
+             if l.strip() and l.strip() != '-']
     expanded = []
     for line in lines:
         if '가로/세로' in line or '세로/가로' in line:
@@ -90,13 +92,40 @@ def parse_creative_format(raw):
             expanded.append(line)
     results = []
     for line in expanded:
-        sec_m = re.search(r"(\d+)['\'\"\"]", line)
+        sec_m = re.search(r'(\d+)[\'\'""""]', line)
+        seconds = sec_m.group(1) if sec_m else ''
+        orientation = 'V' if ('세로' in line or 'Vertical' in line or 'vertical' in line) else 'H'
+        name = line
+        name = re.sub(r'\d+[\'\'""""]', '', name)
+        name = re.sub(r'\([^)]*\)', '', name)
+        name = re.sub(r'가로/?세로|세로/?가로|세로|가로', '', name)
+        name = re.sub(r'\s+', ' ', name).strip().strip('&').strip('-').strip()
+        results.append({'name': name, 'orientation': orientation, 'seconds': seconds})
+    return results or [{'name': '', 'orientation': 'H', 'seconds': ''}]
+
+def parse_creative_format_only(raw):
+    """G열 Creative에서 가로세로 + 초수만 추출 (소재명은 H열에서 따로 가져올 때)"""
+    if not raw or raw in ('-', 'nan', ''):
+        return [{'orientation': 'H', 'seconds': ''}]
+    lines = [l.strip() for l in raw.replace('\\n', '\n').split('\n')
+             if l.strip() and l.strip() != '-']
+    expanded = []
+    for line in lines:
+        if '가로/세로' in line or '세로/가로' in line:
+            expanded.append(line.replace('가로/세로', '가로').replace('세로/가로', '가로'))
+            expanded.append(line.replace('가로/세로', '세로').replace('세로/가로', '세로'))
+        else:
+            expanded.append(line)
+    results = []
+    for line in expanded:
+        sec_m = re.search(r'(\d+)[\'\'""""]', line)
         seconds = sec_m.group(1) if sec_m else ''
         orientation = 'V' if ('세로' in line or 'Vertical' in line or 'vertical' in line) else 'H'
         results.append({'orientation': orientation, 'seconds': seconds})
     return results or [{'orientation': 'H', 'seconds': ''}]
 
 def parse_creative_names(raw):
+    """H열 소재명 컬럼 파싱 (날짜 패턴이면 빈칸)"""
     if not raw or raw in ('-', 'nan', ''):
         return ['']
     date_pattern = re.compile(r'^\d{1,4}[-/]\d{1,2}|^\d{4}-\d{2}-\d{2}|W\d+|^\d+/\d+\s*[~(]')
@@ -155,12 +184,17 @@ def parse_media_mix(mm_bytes):
     col_device   = next((i for i, v in enumerate(df.iloc[header_row]) if safe(v) == 'Device'), None)
     col_targeting= next((i for i, v in enumerate(df.iloc[header_row]) if safe(v) == 'Targeting'), None)
     col_creative = next((i for i, v in enumerate(df.iloc[header_row]) if safe(v) == 'Creative'), None)
+
+    # 소재명 컬럼 감지: Creative 다음 컬럼이 Schedule/Exp 시작이 아닌 경우
     col_creative2 = None
     if col_creative is not None:
         next_col = col_creative + 1
         next_hdr = safe(df.iloc[header_row, next_col]) if next_col < len(df.columns) else ''
         if next_hdr not in ('Schedule', 'Exp. Imps', 'CTR') and not next_hdr.startswith('Exp'):
             col_creative2 = next_col
+
+    # 소재명 컬럼 존재 여부 플래그
+    has_name_col = col_creative2 is not None
 
     date_raw  = safe(df.iloc[3, 4])
     month     = date_raw.split('~')[0].split('/')[0].zfill(2)
@@ -187,11 +221,11 @@ def parse_media_mix(mm_bytes):
         return True
 
     actual = data[data.apply(is_valid, axis=1)].copy()
-    return actual, date_code, camp, cname, col_media, col_adtype, col_device, col_targeting, col_creative, col_creative2
+    return actual, date_code, camp, cname, col_media, col_adtype, col_device, col_targeting, col_creative, col_creative2, has_name_col
 
 def build_code_rows(actual, date_code, camp, cname,
                     col_media, col_adtype, col_device,
-                    col_targeting, col_creative, col_creative2,
+                    col_targeting, col_creative, col_creative2, has_name_col,
                     get_media_code, get_product_code, target_map):
     code_rows = []
     for _, r in actual.iterrows():
@@ -199,39 +233,47 @@ def build_code_rows(actual, date_code, camp, cname,
         device_raw= safe(r[col_device]) if col_device else ''
         adtype    = safe(r[col_adtype]).replace('\n', ' ')
         tgt_raw   = safe(r[col_targeting]).replace('\n', ' ') if col_targeting else ''
-        cr_fmt    = safe(r[col_creative]) if col_creative else ''
+        cr_raw    = safe(r[col_creative]) if col_creative else ''
         cr_name   = safe(r[col_creative2]) if col_creative2 else ''
 
         m_code = get_media_code(media)
         p_code = get_product_code(adtype)
         dev    = get_device_code(device_raw)
-        tgt_list  = parse_targeting_lines(tgt_raw, target_map)
-        fmt_list  = parse_creative_format(cr_fmt)
-        name_list = parse_creative_names(cr_name)
+        tgt_list = parse_targeting_lines(tgt_raw, target_map)
+
+        if has_name_col:
+            # BA Q1 방식: G열=포맷(가로세로/초수), H열=소재명
+            fmt_list  = parse_creative_format_only(cr_raw)
+            name_list = parse_creative_names(cr_name)
+            creative_list = [
+                {'name': n, 'orientation': f['orientation'], 'seconds': f['seconds']}
+                for f in fmt_list for n in name_list
+            ]
+        else:
+            # QPC/McCrispy 방식: G열에서 소재명+포맷 모두 추출
+            creative_list = parse_creative_combined(cr_raw)
 
         for tgt in tgt_list:
-            for fmt in fmt_list:
-                for name in name_list:
-                    j_code = f"{date_code}_{m_code}_{p_code}_{cname}" if (m_code and p_code) else ''
-                    o_code = f"{tgt['gender']}_{tgt['age']}_{tgt['targeting']}_{tgt['note']}"
-                    u_code = f"{dev}_{name}_{fmt['orientation']}_{fmt['seconds']}_A"
-                    full   = f"{j_code}{o_code}{u_code}" if j_code else ''
-                    code_rows.append({
-                        'date': date_code, 'media': media, 'product': adtype, 'campaign': camp,
-                        'd_code': date_code, 'm_code': m_code, 'p_code': p_code, 'c_code': cname,
-                        'j_code': j_code, 'gender': tgt['gender'], 'age': tgt['age'],
-                        'targeting': tgt['targeting'], 'note': tgt['note'], 'o_code': o_code,
-                        'device': dev, 'creative': name, 'orient': fmt['orientation'],
-                        'seconds': fmt['seconds'], 'param': 'A', 'u_code': u_code,
-                        'full': full, 'missing': not (m_code and p_code),
-                    })
+            for cr in creative_list:
+                j_code = f"{date_code}_{m_code}_{p_code}_{cname}" if (m_code and p_code) else ''
+                o_code = f"{tgt['gender']}_{tgt['age']}_{tgt['targeting']}_{tgt['note']}"
+                u_code = f"{dev}_{cr['name']}_{cr['orientation']}_{cr['seconds']}_A"
+                full   = f"{j_code}{o_code}{u_code}" if j_code else ''
+                code_rows.append({
+                    'date': date_code, 'media': media, 'product': adtype, 'campaign': camp,
+                    'd_code': date_code, 'm_code': m_code, 'p_code': p_code, 'c_code': cname,
+                    'j_code': j_code, 'gender': tgt['gender'], 'age': tgt['age'],
+                    'targeting': tgt['targeting'], 'note': tgt['note'], 'o_code': o_code,
+                    'device': dev, 'creative': cr['name'], 'orient': cr['orientation'],
+                    'seconds': cr['seconds'], 'param': 'A', 'u_code': u_code,
+                    'full': full, 'missing': not (m_code and p_code),
+                })
     return code_rows
 
 def write_excel(tool_bytes, code_rows):
     wb = load_workbook(io.BytesIO(tool_bytes))
     ws = wb['CODE']
     for r in range(ws.max_row, 9, -1): ws.delete_rows(r)
-
     header_fill = PatternFill(fill_type='solid', fgColor='FFC000')
     header_font = Font(bold=True, color='FFFFFF')
     headers = {
@@ -245,7 +287,6 @@ def write_excel(tool_bytes, code_rows):
         cell = ws.cell(row=8, column=col, value=name)
         cell.fill = header_fill; cell.font = header_font
         cell.alignment = Alignment(horizontal='center', vertical='center')
-
     miss_fill = PatternFill(fill_type='solid', fgColor='FFD7D7')
     ok_fill   = PatternFill(fill_type='solid', fgColor='FFFFFF')
     for i, d in enumerate(code_rows):
@@ -262,7 +303,6 @@ def write_excel(tool_bytes, code_rows):
             cell = ws.cell(row=r, column=col, value=val)
             cell.fill = fill
             cell.alignment = Alignment(vertical='center', wrap_text=False)
-
     out = io.BytesIO()
     wb.save(out)
     out.seek(0)
@@ -301,12 +341,13 @@ if mm_file and tool_file:
 
                 get_media_code, get_product_code, target_map = load_data_raw(tool_bytes)
                 actual, date_code, camp, cname, *cols = parse_media_mix(mm_bytes)
+                has_name_col = cols[-1]  # 마지막 값이 has_name_col 플래그
                 code_rows = build_code_rows(actual, date_code, camp, cname, *cols,
                                             get_media_code, get_product_code, target_map)
 
-                total     = len(code_rows)
-                ok_cnt    = sum(1 for d in code_rows if not d['missing'])
-                miss_cnt  = total - ok_cnt
+                total    = len(code_rows)
+                ok_cnt   = sum(1 for d in code_rows if not d['missing'])
+                miss_cnt = total - ok_cnt
                 miss_media   = sorted(set(d['media']   for d in code_rows if not d['m_code']))
                 miss_product = sorted(set(d['product'] for d in code_rows if not d['p_code']))
 
@@ -315,7 +356,8 @@ if mm_file and tool_file:
                 with c2: st.markdown(f'<div class="stat-box"><div class="stat-num" style="color:#2E7D32">{ok_cnt}</div><div class="stat-label">코드 완성</div></div>', unsafe_allow_html=True)
                 with c3: st.markdown(f'<div class="stat-box"><div class="stat-num" style="color:#C62828">{miss_cnt}</div><div class="stat-label">빈칸 처리</div></div>', unsafe_allow_html=True)
 
-                st.markdown(f'<div style="margin:1rem 0;display:flex;gap:0.5rem;flex-wrap:wrap;"><span class="badge-neutral">캠페인: {camp}</span><span class="badge-neutral">날짜코드: {date_code}</span></div>', unsafe_allow_html=True)
+                cr_mode = "BA Q1 방식 (G열=포맷, H열=소재명)" if has_name_col else "QPC 방식 (G열=소재명+포맷 통합)"
+                st.markdown(f'<div style="margin:1rem 0;display:flex;gap:0.5rem;flex-wrap:wrap;"><span class="badge-neutral">캠페인: {camp}</span><span class="badge-neutral">날짜코드: {date_code}</span><span class="badge-neutral">소재 파싱: {cr_mode}</span></div>', unsafe_allow_html=True)
 
                 if miss_media or miss_product:
                     with st.expander(f"⚠️ DATA RAW에 없는 항목 — 매체 {len(miss_media)}개 / 상품 {len(miss_product)}개"):
@@ -331,7 +373,7 @@ if mm_file and tool_file:
                     summary = []
                     for media, cnt in Counter(d['media'] for d in code_rows).items():
                         miss = sum(1 for d in code_rows if d['media'] == media and d['missing'])
-                        summary.append({'매체': media, '총 행수': cnt, '완성': cnt - miss, '빈칸': miss})
+                        summary.append({'매체': media, '총 행수': cnt, '완성': cnt-miss, '빈칸': miss})
                     st.dataframe(pd.DataFrame(summary), use_container_width=True, hide_index=True)
 
                 st.markdown("**결과 미리보기**")
@@ -362,11 +404,13 @@ with st.expander("ℹ️ 사용 가이드"):
     - `Media Mix 파일` — 캠페인 미디어 믹스 엑셀 파일
     - `자동화 작업용 파일` — DATA RAW가 포함된 코드 마스터 파일
 
+    **소재 파싱 방식 (자동 감지)**
+    - **BA Q1 방식**: Creative(G열)=포맷, 다음 컬럼(H열)=소재명 → 두 컬럼 분리 파싱
+    - **QPC/McCrispy 방식**: Creative(G열)에 소재명+포맷 통합 → G열에서 모두 추출
+
     **Alias 기능**
-    - DATA RAW의 MEDIA/PRODUCT Alias 컬럼에 미디어믹스 표기명을 쉼표로 구분해서 입력하면 자동 매칭됩니다
-    - 예: FPM 행 Alias → `First Position Moment, First Position Moment Shorts`
+    - DATA RAW의 Alias 컬럼에 미디어믹스 표기명을 쉼표로 구분해서 입력하면 자동 매칭
 
     **결과 파일**
-    - 코드 완성 행: 흰 배경
-    - 코드 미매핑 행: 연빨간 배경 (DATA RAW에 코드 추가 후 재실행)
+    - 코드 완성 행: 흰 배경 / 미매핑 행: 연빨간 배경
     """)
