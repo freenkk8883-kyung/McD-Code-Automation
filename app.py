@@ -270,10 +270,33 @@ def build_code_rows(actual, date_code, camp, cname,
                 })
     return code_rows
 
+def get_formula_for_row(template_formulas, new_row, template_row=10):
+    """template_row 수식을 new_row용으로 행번호만 치환 (절대참조 $는 유지)"""
+    result = {}
+    for col_letter, formula in template_formulas.items():
+        new_formula = re.sub(
+            r'(?<=[A-Z])(\d+)(?!\d)',
+            lambda m: str(new_row) if int(m.group()) == template_row else m.group(),
+            formula
+        )
+        result[col_letter] = new_formula
+    return result
+
 def write_excel(tool_bytes, code_rows):
     wb = load_workbook(io.BytesIO(tool_bytes))
     ws = wb['CODE']
+
+    # 10행 수식 템플릿 추출
+    template_formulas = {}
+    for col in range(1, 28):
+        cell = ws.cell(row=10, column=col)
+        if cell.value and str(cell.value).startswith('='):
+            template_formulas[cell.column_letter] = cell.value
+
+    # 기존 데이터 삭제 (10행부터)
     for r in range(ws.max_row, 9, -1): ws.delete_rows(r)
+
+    # 8행 헤더 음영
     header_fill = PatternFill(fill_type='solid', fgColor='FFC000')
     header_font = Font(bold=True, color='FFFFFF')
     headers = {
@@ -287,22 +310,50 @@ def write_excel(tool_bytes, code_rows):
         cell = ws.cell(row=8, column=col, value=name)
         cell.fill = header_fill; cell.font = header_font
         cell.alignment = Alignment(horizontal='center', vertical='center')
-    miss_fill = PatternFill(fill_type='solid', fgColor='FFD7D7')
-    ok_fill   = PatternFill(fill_type='solid', fgColor='FFFFFF')
+
+    miss_fill  = PatternFill(fill_type='solid', fgColor='FFD7D7')  # 행 전체 빈칸(매체/상품 미매핑)
+    ok_fill    = PatternFill(fill_type='solid', fgColor='FFFFFF')
+    empty_fill = PatternFill(fill_type='solid', fgColor='FFCCCC')  # 개별 셀 값 없음 → 빨간 음영
+
+    # 가운데 정렬 컬럼 (J=10, O=15, U=21, V=22 제외)
+    center_cols = {2,3,4,5,6,7,8,9,11,12,13,14,16,17,18,19,20}
+    # 빈값 체크 대상 컬럼: F~I(6~9), K~N(11~14), P~T(16~20)
+    check_empty_cols = set(range(6,10)) | set(range(11,15)) | set(range(16,21))
+
     for i, d in enumerate(code_rows):
-        r = 10 + i
+        r    = 10 + i
         fill = miss_fill if d['missing'] else ok_fill
-        for col, val in {
+
+        # 값 기입 (B, C, D, E, K, L, M, N, P, Q, R, S, T)
+        value_map = {
             2:d['date'], 3:d['media'], 4:d['product'], 5:d['campaign'],
-            6:d['d_code'], 7:d['m_code'], 8:d['p_code'], 9:d['c_code'],
-            10:d['j_code'], 11:d['gender'], 12:d['age'], 13:d['targeting'],
-            14:d['note'], 15:d['o_code'], 16:d['device'], 17:d['creative'],
-            18:d['orient'], 19:d['seconds'], 20:d['param'], 21:d['u_code'],
-            22:d['full'],
-        }.items():
+            11:d['gender'], 12:d['age'], 13:d['targeting'], 14:d['note'],
+            16:d['device'], 17:d['creative'], 18:d['orient'],
+            19:d['seconds'], 20:d['param'],
+        }
+        for col, val in value_map.items():
             cell = ws.cell(row=r, column=col, value=val)
-            cell.fill = fill
-            cell.alignment = Alignment(vertical='center', wrap_text=False)
+            # 빈값 + 체크 대상 컬럼 → 빨간 음영
+            if col in check_empty_cols and not str(val).strip():
+                cell.fill = empty_fill
+            else:
+                cell.fill = fill
+            align_h = 'center' if col in center_cols else 'left'
+            cell.alignment = Alignment(horizontal=align_h, vertical='center', wrap_text=False)
+
+        # 수식 기입 (F, G, H, I, J, O, U, V)
+        row_formulas = get_formula_for_row(template_formulas, r)
+        for col_letter, formula in row_formulas.items():
+            col_idx = ord(col_letter) - ord('A') + 1
+            cell = ws.cell(row=r, column=col_idx, value=formula)
+            # G(7), H(8)열 수식이지만 매체/상품 코드 없으면 빨간 음영
+            if col_idx in check_empty_cols and d['missing']:
+                cell.fill = empty_fill
+            else:
+                cell.fill = fill
+            align_h = 'center' if col_idx in center_cols else 'left'
+            cell.alignment = Alignment(horizontal=align_h, vertical='center', wrap_text=False)
+
     out = io.BytesIO()
     wb.save(out)
     out.seek(0)
