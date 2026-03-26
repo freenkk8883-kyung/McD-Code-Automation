@@ -141,15 +141,61 @@ def parse_creative_names(raw):
     return results if results else ['']
 
 def load_data_raw(tool_bytes):
-    df_raw = pd.read_excel(io.BytesIO(tool_bytes), sheet_name='DATA RAW', header=None)
+    wb = load_workbook(io.BytesIO(tool_bytes), data_only=True)
+    sheet_names = wb.sheetnames
     media_map, product_map, target_map = {}, {}, {}
-    for _, r in df_raw.iloc[1:].iterrows():
-        if safe(r[2]) and safe(r[6]):
-            media_map[safe(r[2]).upper()] = safe(r[6])
-        if safe(r[9]) and safe(r[13]):
-            product_map[safe(r[9]).upper()] = safe(r[13])
-        if safe(r[19]) and safe(r[20]):
-            target_map[safe(r[19]).upper()] = safe(r[20])
+
+    # ── Media 시트: C열=매체명, G열=최종CODE ──────────────────────
+    if 'Media' in sheet_names:
+        ws_m = wb['Media']
+        for r in range(2, ws_m.max_row + 1):
+            name = ws_m.cell(row=r, column=3).value  # C열
+            code = ws_m.cell(row=r, column=7).value  # G열
+            if name and code and str(code).strip() not in ('최종 CODE', ''):
+                media_map[str(name).strip().upper()] = str(code).strip()
+    # ── 구버전 호환: DATA RAW 단일 시트 (기존 포맷) ─────────────
+    elif 'DATA RAW' in sheet_names:
+        df = pd.read_excel(io.BytesIO(tool_bytes), sheet_name='DATA RAW',
+                           header=None, engine='openpyxl')
+        for _, r in df.iloc[1:].iterrows():
+            if safe(r[2]) and safe(r[6]):
+                media_map[safe(r[2]).upper()] = safe(r[6])
+
+    # ── Product 시트: C열=상품명, G열=최종CODE ────────────────────
+    if 'Product' in sheet_names:
+        ws_p = wb['Product']
+        for r in range(2, ws_p.max_row + 1):
+            name = ws_p.cell(row=r, column=3).value  # C열
+            code = ws_p.cell(row=r, column=7).value  # G열
+            if name and code and str(code).strip() not in ('최종 CODE', ''):
+                product_map[str(name).strip().upper()] = str(code).strip()
+    elif 'DATA RAW' in sheet_names:
+        df = pd.read_excel(io.BytesIO(tool_bytes), sheet_name='DATA RAW',
+                           header=None, engine='openpyxl')
+        for _, r in df.iloc[1:].iterrows():
+            if safe(r[9]) and safe(r[13]):
+                product_map[safe(r[9]).upper()] = safe(r[13])
+
+    # ── DATA RAW 시트: F열=타겟팅, G열=최종CODE ──────────────────
+    if 'DATA RAW' in sheet_names:
+        ws_r = wb['DATA RAW']
+        # v2: F열=타겟팅, G열=최종CODE
+        # 구버전: col19=타겟팅, col20=최종CODE
+        header_f = ws_r.cell(row=1, column=6).value
+        if header_f and '타겟팅' in str(header_f):
+            # v2 구조
+            for r in range(2, ws_r.max_row + 1):
+                tgt  = ws_r.cell(row=r, column=6).value  # F: 타겟팅
+                code = ws_r.cell(row=r, column=7).value  # G: 최종CODE
+                if tgt and code and str(code).strip() not in ('최종 CODE', ''):
+                    target_map[str(tgt).strip().upper()] = str(code).strip()
+        else:
+            # 구버전 구조
+            df = pd.read_excel(io.BytesIO(tool_bytes), sheet_name='DATA RAW',
+                               header=None, engine='openpyxl')
+            for _, r in df.iloc[1:].iterrows():
+                if safe(r[19]) and safe(r[20]):
+                    target_map[safe(r[19]).upper()] = safe(r[20])
 
     def get_media_code(media):
         return media_map.get(media.strip().upper(), '')
@@ -278,11 +324,32 @@ def write_excel(tool_bytes, code_rows):
     ws = wb['CODE']
 
     # 10행 수식 템플릿 추출
+    # #REF! 오류 수식은 올바른 시트 참조로 교체
+    sheet_names = wb.sheetnames
+    media_sheet   = 'Media'   if 'Media'   in sheet_names else 'DATA RAW'
+    product_sheet = 'Product' if 'Product' in sheet_names else 'DATA RAW'
+
+    # 시트별 XLOOKUP 수식 정의
+    if 'Media' in sheet_names:
+        # v2: Media/Product 시트 분리 구조
+        g_formula = f"=_xlfn.XLOOKUP(C10,{media_sheet}!$C$2:$C$5000,{media_sheet}!$G$2:$G$5000,\"\")"
+        h_formula = f"=_xlfn.XLOOKUP(D10,{product_sheet}!$C$2:$C$5000,{product_sheet}!$G$2:$G$5000,\"\")"
+    else:
+        # 구버전: DATA RAW 단일 시트
+        g_formula = "=_xlfn.XLOOKUP(C10,'DATA RAW'!$C$2:$C$4000,'DATA RAW'!$G$2:$G$4000,\"\")"
+        h_formula = "=_xlfn.XLOOKUP(D10,'DATA RAW'!$J$2:$J$4000,'DATA RAW'!$N$2:$N$4000,\"\")"
+
     template_formulas = {}
     for col in range(1, 28):
         cell = ws.cell(row=10, column=col)
         if cell.value and str(cell.value).startswith('='):
-            template_formulas[cell.column_letter] = cell.value
+            formula = str(cell.value)
+            # #REF! 오류 수식 교체
+            if col == 7 and '#REF!' in formula:
+                formula = g_formula
+            elif col == 8 and '#REF!' in formula:
+                formula = h_formula
+            template_formulas[cell.column_letter] = formula
 
     # 기존 데이터 삭제 (10행부터)
     for r in range(ws.max_row, 9, -1): ws.delete_rows(r)
