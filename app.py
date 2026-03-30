@@ -517,31 +517,26 @@ def write_excel(tool_bytes, code_rows):
     ws.column_dimensions['A'].hidden = True
 
     # 유효성검사 직접 추가 (openpyxl이 원본 파일의 확장 유효성검사를 읽지 못해 소실되므로 코드로 재생성)
-    # Media/Product 시트 실제 데이터 마지막 행 동적 탐색
-    def last_data_row(sheet, col=3):
-        for r in range(sheet.max_row, 1, -1):
-            if sheet.cell(row=r, column=col).value:
-                return r
-        return 2
-
-    media_last   = last_data_row(wb['Media'])   if 'Media'   in wb.sheetnames else 2
-    product_last = last_data_row(wb['Product']) if 'Product' in wb.sheetnames else 2
 
     ws.data_validations.dataValidation = []  # 기존 깨진 유효성검사 초기화
 
     dv_configs = [
-        # (열, 참조범위, 설명)
-        ('C', f"Media!$C$2:$C${media_last}",    '매체명'),
-        ('D', f"Product!$C$2:$C${product_last}", '상품명'),
-        ('K', '"P,M,F"',                            '성별'),
-        ('P', '"A,P,M,C"',                          'Device'),
-        ('R', '"H,V,HV"',                             '가로세로'),
+        # Media/Product 시트 범위를 넉넉하게 고정 설정 → 항목 추가 시 자동 반영
+        ('C', "Media!$C$2:$C$5000",    '매체명'),
+        ('D', "Product!$C$2:$C$5000",  '상품명'),
+        ('K', '"P,M,F"',               '성별'),
+        ('P', '"A,P,M,C"',             'Device'),
+        ('R', '"H,V,HV"',              '가로세로'),
     ]
     total_rows = 10 + len(code_rows) - 1
     for col_letter, formula, _ in dv_configs:
         dv = DataValidation(type='list', formula1=formula, allow_blank=True, showErrorMessage=False)
         dv.sqref = f'{col_letter}10:{col_letter}{total_rows}'
         ws.add_data_validation(dv)
+
+    # 파일 열 때 수식 강제 재계산 (조건부서식 즉시 반영)
+    wb.calculation.calcMode = 'auto'
+    wb.calculation.fullCalcOnLoad = True
 
     out = io.BytesIO()
     wb.save(out)
