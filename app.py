@@ -399,7 +399,7 @@ def write_excel(tool_bytes, code_rows):
         }
         for col, val in value_map.items():
             cell = ws.cell(row=r, column=col, value=val)
-            cell.fill = no_fill if col in cf_cols else fill
+            cell.fill = no_fill if col in cf_cols else ok_fill  # 배경은 흰색으로 통일, 음영은 조건부서식 담당
             align_h = 'center' if col in center_cols else 'left'
             cell.alignment = Alignment(horizontal=align_h, vertical='center', wrap_text=False)
 
@@ -408,26 +408,28 @@ def write_excel(tool_bytes, code_rows):
         for col_letter, formula in row_formulas.items():
             col_idx = ord(col_letter) - ord('A') + 1
             cell = ws.cell(row=r, column=col_idx, value=formula)
-            # G(7)=매체코드, H(8)=상품코드 missing이면 분홍
-            if col_idx in (7, 8) and d['missing']:
-                cell.fill = miss_fill
-            elif col_idx in cf_cols:
-                cell.fill = no_fill
-            else:
-                cell.fill = fill
+            cell.fill = no_fill if col_idx in cf_cols else ok_fill  # 배경은 흰색으로 통일
             align_h = 'center' if col_idx in center_cols else 'left'
             cell.alignment = Alignment(horizontal=align_h, vertical='center', wrap_text=False)
 
-    # 조건부서식: K~N, P~T열 빈칸이면 빨간 음영, 값 채우면 자동 해제
-    red_fill   = PatternFill(fill_type='solid', fgColor='FFCCCC')
-    total_rows = 10 + len(code_rows) - 1
-    cf_ranges  = [
-        (f'K10:N{total_rows}', 'K10'),
-        (f'P10:T{total_rows}', 'P10'),
-    ]
-    for rng, first_cell in cf_ranges:
+    # 조건부서식 설정
+    miss_cf_fill = PatternFill(fill_type='solid', fgColor='FFD7D7')  # 미매핑 행 음영 (연분홍)
+    red_fill     = PatternFill(fill_type='solid', fgColor='FFCCCC')  # 빈칸 음영 (진분홍)
+    total_rows   = 10 + len(code_rows) - 1
+
+    # ① B~J, U~V열: G열 OR H열이 비어있으면 분홍 음영 → 둘 다 채워지면 자동 해제
+    for rng in [f'B10:J{total_rows}', f'U10:V{total_rows}']:
         rule = FormulaRule(
-            formula=[f'LEN(TRIM({first_cell}))=0'],
+            formula=['OR(LEN(TRIM($G10))=0,LEN(TRIM($H10))=0)'],
+            fill=miss_cf_fill,
+            stopIfTrue=False,
+        )
+        ws.conditional_formatting.add(rng, rule)
+
+    # ② K~N, P~T열: 해당 셀이 비어있으면 진분홍 음영 → 값 채우면 자동 해제
+    for rng, anchor in [(f'K10:N{total_rows}', 'K10'), (f'P10:T{total_rows}', 'P10')]:
+        rule = FormulaRule(
+            formula=[f'LEN(TRIM({anchor}))=0'],
             fill=red_fill,
             stopIfTrue=False,
         )
