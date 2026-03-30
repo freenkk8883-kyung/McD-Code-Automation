@@ -390,6 +390,10 @@ def write_excel(tool_bytes, code_rows):
         r    = 10 + i
         fill = miss_fill if d['missing'] else ok_fill
 
+        # A열: 미매핑 플래그 (1=미매핑, 0=정상) — 숨김 처리, 조건부서식 기준으로 사용
+        flag_cell = ws.cell(row=r, column=1, value=1 if d['missing'] else 0)
+        flag_cell.fill = ok_fill
+
         # 값 기입 (B, C, D, E, K, L, M, N, P, Q, R, S, T)
         value_map = {
             2: d['date'],      3: d['media'],    4: d['product'],  5: d['campaign'],
@@ -417,15 +421,10 @@ def write_excel(tool_bytes, code_rows):
     red_fill     = PatternFill(fill_type='solid', fgColor='FFCCCC')  # 빈칸 음영 (진분홍)
     total_rows   = 10 + len(code_rows) - 1
 
-    # ① B~J, U~V열: G열 OR H열이 ""(미매핑)이면 분홍 음영 → 둘 다 채워지면 자동 해제
-    # G/H열은 XLOOKUP 수식이라 빈값도 ""로 반환되므로 ="" 조건 사용
-    for rng in [f'B10:J{total_rows}', f'U10:V{total_rows}']:
-        rule = FormulaRule(
-            formula=['OR($G10="",$H10="")'],
-            fill=miss_cf_fill,
-            stopIfTrue=False,
-        )
-        ws.conditional_formatting.add(rng, rule)
+    # ① B~V열 전체: A열 플래그=1(미매핑)이면 분홍 음영 → A열을 0으로 바꾸면 자동 해제
+    #   (G/H열 XLOOKUP 수식이 미계산 상태라 수식 기반 조건부서식이 동작 안 함 → A열 플래그로 우회)
+    rule_miss = FormulaRule(formula=['$A10=1'], fill=miss_cf_fill, stopIfTrue=False)
+    ws.conditional_formatting.add(f'B10:V{total_rows}', rule_miss)
 
     # ② K~N열: 각 셀 기준으로 비어있으면 진분홍 음영 → 값 채우면 자동 해제
     rule_kn = FormulaRule(formula=['LEN(TRIM(K10))=0'], fill=red_fill, stopIfTrue=False)
@@ -434,6 +433,9 @@ def write_excel(tool_bytes, code_rows):
     # ③ P~T열: 각 셀 기준으로 비어있으면 진분홍 음영 → 값 채우면 자동 해제
     rule_pt = FormulaRule(formula=['LEN(TRIM(P10))=0'], fill=red_fill, stopIfTrue=False)
     ws.conditional_formatting.add(f'P10:T{total_rows}', rule_pt)
+
+    # A열 숨김 처리 (플래그 열, 사용자에게 보이지 않도록)
+    ws.column_dimensions['A'].hidden = True
 
     # 유효성검사 직접 추가 (openpyxl이 원본 파일의 확장 유효성검사를 읽지 못해 소실되므로 코드로 재생성)
     # Media/Product 시트 실제 데이터 마지막 행 동적 탐색
