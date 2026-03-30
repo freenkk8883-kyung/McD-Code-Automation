@@ -3,8 +3,9 @@ import pandas as pd
 import re
 import io
 from openpyxl import load_workbook
-from openpyxl.styles import PatternFill, Alignment, Font
+from openpyxl.styles import PatternFill, Alignment, Font, Protection
 from openpyxl.formatting.rule import FormulaRule
+from openpyxl.worksheet.datavalidation import DataValidation
 from collections import Counter
 
 st.set_page_config(page_title="McD 코드 자동화", page_icon="🍟", layout="wide")
@@ -323,8 +324,12 @@ def write_excel(tool_bytes, code_rows):
     wb = load_workbook(io.BytesIO(tool_bytes))
     ws = wb['CODE']
 
-    # 시트 보호 해제 → 유효성검사는 유지하되 셀 편집 가능하도록
+    # 셀 잠금 해제 → 유효성검사는 유지하되 셀 편집 가능하도록
+    # (원본 파일 셀이 전부 locked=True → 출력 파일에서도 수정 불가 원인)
     ws.protection.sheet = False
+    for row in ws.iter_rows():
+        for cell in row:
+            cell.protection = Protection(locked=False)
 
     # 10행 수식 템플릿 추출
     # #REF! 오류 수식은 올바른 시트 참조로 교체
@@ -427,6 +432,33 @@ def write_excel(tool_bytes, code_rows):
             stopIfTrue=False,
         )
         ws.conditional_formatting.add(rng, rule)
+
+    # 유효성검사 직접 추가 (openpyxl이 원본 파일의 확장 유효성검사를 읽지 못해 소실되므로 코드로 재생성)
+    # Media/Product 시트 실제 데이터 마지막 행 동적 탐색
+    def last_data_row(sheet, col=3):
+        for r in range(sheet.max_row, 1, -1):
+            if sheet.cell(row=r, column=col).value:
+                return r
+        return 2
+
+    media_last   = last_data_row(wb['Media'])   if 'Media'   in wb.sheetnames else 2
+    product_last = last_data_row(wb['Product']) if 'Product' in wb.sheetnames else 2
+
+    ws.data_validations.dataValidation = []  # 기존 깨진 유효성검사 초기화
+
+    dv_configs = [
+        # (열, 참조범위, 설명)
+        ('C', f"Media!$C$2:$C${media_last}",    '매체명'),
+        ('D', f"Product!$C$2:$C${product_last}", '상품명'),
+        ('K', '"P,M,F"',                            '성별'),
+        ('P', '"A,P,M,C"',                          'Device'),
+        ('R', '"H,V"',                              '가로세로'),
+    ]
+    total_rows = 10 + len(code_rows) - 1
+    for col_letter, formula, _ in dv_configs:
+        dv = DataValidation(type='list', formula1=formula, allow_blank=True, showErrorMessage=False)
+        dv.sqref = f'{col_letter}10:{col_letter}{total_rows}'
+        ws.add_data_validation(dv)
 
     out = io.BytesIO()
     wb.save(out)
