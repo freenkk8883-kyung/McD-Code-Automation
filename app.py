@@ -417,23 +417,23 @@ def write_excel(tool_bytes, code_rows):
     red_fill     = PatternFill(fill_type='solid', fgColor='FFCCCC')  # 빈칸 음영 (진분홍)
     total_rows   = 10 + len(code_rows) - 1
 
-    # ① B~J, U~V열: G열 OR H열이 비어있으면 분홍 음영 → 둘 다 채워지면 자동 해제
+    # ① B~J, U~V열: G열 OR H열이 ""(미매핑)이면 분홍 음영 → 둘 다 채워지면 자동 해제
+    # G/H열은 XLOOKUP 수식이라 빈값도 ""로 반환되므로 ="" 조건 사용
     for rng in [f'B10:J{total_rows}', f'U10:V{total_rows}']:
         rule = FormulaRule(
-            formula=['OR(LEN(TRIM($G10))=0,LEN(TRIM($H10))=0)'],
+            formula=['OR($G10="",$H10="")'],
             fill=miss_cf_fill,
             stopIfTrue=False,
         )
         ws.conditional_formatting.add(rng, rule)
 
-    # ② K~N, P~T열: 해당 셀이 비어있으면 진분홍 음영 → 값 채우면 자동 해제
-    for rng, anchor in [(f'K10:N{total_rows}', 'K10'), (f'P10:T{total_rows}', 'P10')]:
-        rule = FormulaRule(
-            formula=[f'LEN(TRIM({anchor}))=0'],
-            fill=red_fill,
-            stopIfTrue=False,
-        )
-        ws.conditional_formatting.add(rng, rule)
+    # ② K~N열: 각 셀 기준으로 비어있으면 진분홍 음영 → 값 채우면 자동 해제
+    rule_kn = FormulaRule(formula=['LEN(TRIM(K10))=0'], fill=red_fill, stopIfTrue=False)
+    ws.conditional_formatting.add(f'K10:N{total_rows}', rule_kn)
+
+    # ③ P~T열: 각 셀 기준으로 비어있으면 진분홍 음영 → 값 채우면 자동 해제
+    rule_pt = FormulaRule(formula=['LEN(TRIM(P10))=0'], fill=red_fill, stopIfTrue=False)
+    ws.conditional_formatting.add(f'P10:T{total_rows}', rule_pt)
 
     # 유효성검사 직접 추가 (openpyxl이 원본 파일의 확장 유효성검사를 읽지 못해 소실되므로 코드로 재생성)
     # Media/Product 시트 실제 데이터 마지막 행 동적 탐색
