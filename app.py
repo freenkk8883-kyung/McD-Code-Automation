@@ -97,7 +97,7 @@ def parse_creative_combined(raw):
     구분 기준: 빈 줄(한 줄 띄어쓰기)
     """
     if not raw or raw in ('-', 'nan', ''):
-        return [{'name': 'Image', 'orientation': 'H', 'seconds': 'Image'}]
+        return [{'name': 'Image', 'display': 'Image_H_Image', 'orientation': 'H', 'seconds': 'Image'}]
     # 빈 줄 기준으로 블록 분리
     blocks = re.split(r'\n', raw.strip())
     if not blocks or blocks == ['']:
@@ -126,15 +126,18 @@ def parse_creative_combined(raw):
                 orientation = 'V'
             else:
                 orientation = 'H'
-            # 소재명: 초수/가로세로/괄호 제거
-            name = re.sub(r'\d+[\'\'""""]', '', line)
-            name = re.sub(r'\([^)]*\)', '', name)
-            name = re.sub(r'가로/?세로|세로/?가로|세로|가로', '', name)
+            # 소재명 추출: 초수/가로세로/괄호 제거
+            name = line
+            name = re.sub(r"\d+['\'\"""\"초]", '', name)      # 초수 제거
+            name = re.sub(r'\([^)]*\)', '', name)               # 괄호 제거
+            name = re.sub(r'(?<![가-힣])가로/?세로(?![가-힣])|(?<![가-힣])세로/?가로(?![가-힣])|(?<![가-힣])세로(?![가-힣])|(?<![가-힣])가로(?![가-힣])', '', name)  # 방향어 제거
+            name = re.sub(r'_+', '_', name)                     # 연속 _ 정리
+            name = name.strip('_').strip()                       # 앞뒤 _ 및 공백 제거
             name = re.sub(r'\s+', ' ', name).strip().strip('&').strip('-').strip()
-            # Q열 출력 형식: 소재_가로세로_초수
+            # Q열: 소재명만 / 코드 생성용은 소재_가로세로_초수
             display = f"{name}_{orientation}_{seconds}"
-            results.append({'name': display, 'orientation': orientation, 'seconds': seconds})
-    return results or [{'name': 'Image_H_Image', 'orientation': 'H', 'seconds': 'Image'}]
+            results.append({'name': name, 'display': display, 'orientation': orientation, 'seconds': seconds})
+    return results or [{'name': 'Image', 'display': 'Image_H_Image', 'orientation': 'H', 'seconds': 'Image'}]
 
 def parse_creative_format_only(raw):
     """G열 Creative에서 가로세로 + 초수만 추출 (소재명은 H열에서 따로 가져올 때)
@@ -328,8 +331,8 @@ def build_code_rows(actual, date_code, camp, cname,
             fmt_list  = parse_creative_format_only(cr_raw)
             name_list = parse_creative_names(cr_name)
             creative_list = [
-                # Q열 출력 형식: 소재_가로세로_초수
-                {'name': f"{n}_{f['orientation']}_{f['seconds']}", 'orientation': f['orientation'], 'seconds': f['seconds']}
+                # Q열: 소재명만 / display: 소재_가로세로_초수 (코드 생성용)
+                {'name': n, 'display': f"{n}_{f['orientation']}_{f['seconds']}", 'orientation': f['orientation'], 'seconds': f['seconds']}
                 for f in fmt_list for n in name_list
             ]
         else:
@@ -340,7 +343,7 @@ def build_code_rows(actual, date_code, camp, cname,
             for cr in creative_list:
                 j_code = f"{date_code}_{m_code}_{p_code}_{cname}" if (m_code and p_code) else ''
                 o_code = f"{tgt['gender']}_{tgt['age']}_{tgt['targeting']}_{tgt['note']}"
-                u_code = f"{dev}_{cr['name']}_{cr['orientation']}_{cr['seconds']}_A"
+                u_code = f"{dev}_{cr['display']}_A"
                 full   = f"{j_code}{o_code}{u_code}" if j_code else ''
                 code_rows.append({
                     'date': date_code, 'media': media, 'product': adtype, 'campaign': camp,
