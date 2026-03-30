@@ -48,7 +48,7 @@ def get_device_code(d):
 
 def parse_targeting_lines(raw, target_map):
     if not raw or raw in ('-', 'NonTargeting', 'Non-Targeting', 'nan'):
-        return [{'gender': 'P', 'age': '1865', 'targeting': 'non', 'note': 'A'}]
+        return [{'gender': 'P', 'age': '1865', 'targeting': 'P1865+non', 'note': 'A'}]
     # 구분 기준: 줄바꿈(\n) 기준으로 각 타겟팅 항목 분리
     blocks = re.split(r'\n', raw.strip())
     if not blocks or blocks == ['']:
@@ -60,22 +60,32 @@ def parse_targeting_lines(raw, target_map):
             continue
         # 번호 접두사 제거 (1. 2) 등)
         block = re.sub(r'^\d{1,2}[\.\)]\s*', '', block).strip()
-        block = re.sub(r'\([^)]*\)', '', block).strip()
+        block = re.sub(r'^\*.*', '', block).strip()  # * 로 시작하는 주석 제거
         block = re.sub(r'^\[타겟팅\]\s*', '', block).strip()
-        # 성별+연령 추출
-        gm = re.search(r'\b([PMF])(\d{4})\b', block)
+        if not block:
+            continue
+        # 이미 '성별연령+타겟팅' 형식이면 → 성별/연령은 K/L열용으로 추출, M열엔 타겟팅 키워드만
+        # 예: "P1844+Sports Select" → gender=P, age=1844, targeting="Sports Select"
+        already_formatted = re.match(r'^([PMF])(\d{4})\+(.+)$', block)
+        if already_formatted:
+            gender = already_formatted.group(1)
+            age    = already_formatted.group(2)
+            code   = already_formatted.group(3).strip()
+            results.append({'gender': gender, 'age': age, 'targeting': code, 'note': 'A'})
+            continue
+        # 일반 파싱: 성별+연령 추출
+        block_clean = re.sub(r'\([^)]*\)', '', block).strip()
+        gm = re.search(r'\b([PMF])(\d{4})\b', block_clean)
         if gm:
             gender, age = gm.group(1), gm.group(2)
         else:
-            gm2 = re.search(r'\b([PMF])\b', block)
+            gm2 = re.search(r'\b([PMF])\b', block_clean)
             gender = gm2.group(1) if gm2 else 'P'
-            am2 = re.search(r'\b(\d{4})\b', block)
+            am2 = re.search(r'\b(\d{4})\b', block_clean)
             age = am2.group(1) if am2 else '1865'
-        # 타겟팅 키워드: 성별/연령 제거 후 첫 번째 키워드
-        cleaned = re.sub(r'[PMF]\d{4}\+?', '', block).strip().lstrip('+').strip()
+        cleaned = re.sub(r'[PMF]\d{4}\+?', '', block_clean).strip().lstrip('+').strip()
         first_kw = cleaned.split(',')[0].split('_')[0].strip()
         code = target_map.get(first_kw.upper()) or target_map.get(cleaned.upper()) or (first_kw if first_kw else cleaned)
-        # M열 출력 형식: 성별연령+타겟팅 (예: P1865+non)
         targeting_code = f"{gender}{age}+{code}"
         results.append({'gender': gender, 'age': age, 'targeting': targeting_code, 'note': 'A'})
     return results if results else [{'gender': 'P', 'age': '1865', 'targeting': 'P1865+non', 'note': 'A'}]
@@ -106,7 +116,7 @@ def parse_creative_combined(raw):
         else:
             lines = [block]
         for line in lines:
-            sec_m = re.search(r'(\d+)[\'\'""""]', line)
+            sec_m = re.search(r"(\d+)['\'\"""\"초]", line)
             seconds = sec_m.group(1) if sec_m else 'Image'
             has_h = '가로' in line or 'horizontal' in line.lower()
             has_v = '세로' in line or 'vertical' in line.lower()
@@ -147,7 +157,7 @@ def parse_creative_format_only(raw):
             expanded.append(block)
     results = []
     for line in expanded:
-        sec_m = re.search(r'(\d+)[\'\'""""]', line)
+        sec_m = re.search(r"(\d+)['\'\"""\"초]", line)
         seconds = sec_m.group(1) if sec_m else 'Image'
         has_h = '가로' in line or 'horizontal' in line.lower()
         has_v = '세로' in line or 'vertical' in line.lower()
@@ -303,10 +313,10 @@ def build_code_rows(actual, date_code, camp, cname,
     for _, r in actual.iterrows():
         media     = safe(r[col_media])
         device_raw= safe(r[col_device]) if col_device else ''
-        adtype    = safe(r[col_adtype]).replace('\n', ' ')
-        tgt_raw   = safe(r[col_targeting]).replace('\n', ' ') if col_targeting else ''
-        cr_raw    = safe(r[col_creative]) if col_creative else ''
-        cr_name   = safe(r[col_creative2]) if col_creative2 else ''
+        adtype    = safe(r[col_adtype]).replace('\n', ' ').strip()
+        tgt_raw   = safe(r[col_targeting]).replace('\\n', '\n') if col_targeting else ''
+        cr_raw    = safe(r[col_creative]).replace('\\n', '\n') if col_creative else ''
+        cr_name   = safe(r[col_creative2]).replace('\\n', '\n') if col_creative2 else ''
 
         m_code = get_media_code(media)
         p_code = get_product_code(adtype)
