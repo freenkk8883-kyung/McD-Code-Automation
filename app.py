@@ -323,8 +323,8 @@ def write_excel(tool_bytes, code_rows):
     wb = load_workbook(io.BytesIO(tool_bytes))
     ws = wb['CODE']
 
-    # 유효성검사 전체 제거 → 출력 파일에서 셀 자유롭게 수정 가능
-    ws.data_validations.dataValidation = []
+    # 시트 보호 해제 → 유효성검사는 유지하되 셀 편집 가능하도록
+    ws.protection.sheet = False
 
     # 10행 수식 템플릿 추출
     # #REF! 오류 수식은 올바른 시트 참조로 교체
