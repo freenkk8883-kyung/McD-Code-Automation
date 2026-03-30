@@ -47,47 +47,60 @@ def get_device_code(d):
     return 'A'
 
 def parse_targeting_lines(raw, target_map):
-    if not raw or raw in ('-', 'NonTargeting', 'Non-Targeting', 'nan'):
+    # Non Targeting 계열 모두 통일 처리
+    if not raw or re.match(r'^Non[\s\-]?Targeting$', raw.strip(), re.IGNORECASE) or raw.strip() in ('-', 'NonTargeting', 'Non-Targeting', 'nan'):
         return [{'gender': 'P', 'age': '1865', 'targeting': 'non', 'note': 'A'}]
-    # 구분 기준: 줄바꿈(\n) 기준으로 각 타겟팅 항목 분리
-    # 단, 다음 줄이 '('로 시작하면 이전 줄의 연속으로 합침 (예: Time\n(14:00~14:59))
     raw_lines = raw.strip().split('\n')
+    # 다음 줄이 (로 시작하면 이전 줄과 합침
     merged = []
     for line in raw_lines:
         if line.strip().startswith('(') and merged:
             merged[-1] = merged[-1] + ' ' + line.strip()
         else:
             merged.append(line)
-    blocks = merged
+    # 중복 줄 제거 (순서 유지)
+    seen = set()
+    deduped = []
+    for line in merged:
+        key = line.strip()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(line)
     results = []
-    for block in blocks:
+    for block in deduped:
         block = block.strip()
         if not block:
             continue
-        # 번호 접두사 제거 (1. 1) 등)
-        block = re.sub(r'^\d{1,2}[\.\)]\s*', '', block).strip()
-        # + 로 시작하는 부연 설명 줄 제거 (예: "+2024-2025 McCrispy Re-targeting")
+        # Non Targeting 계열 인라인 처리
+        if re.match(r'^Non[\s\-]?Targeting$', block, re.IGNORECASE):
+            results.append({'gender': 'P', 'age': '1865', 'targeting': 'non', 'note': 'A'})
+            continue
+        # 번호 접두사 제거
+        block = re.sub(r'^\d{1,2}[\.)\]\s*', '', block).strip()
         if block.startswith('+'):
             continue
-        block = re.sub(r'^\*.*', '', block).strip()   # * 주석 제거
+        block = re.sub(r'^\*.*', '', block).strip()
         block = re.sub(r'^\[타겟팅\]\s*', '', block).strip()
         if not block:
             continue
-        # 이미 '성별연령+타겟팅' 형식인지 확인
-        # 단, 성별(P/M/F) + 정확히 4자리 숫자 + + 로 시작해야 함
+        # 번호 제거 후 연도(2025 등)로 시작하면 성별/연령 없는 항목
+        if re.match(r'^\d{4}', block) and not re.match(r'^[PMF]\d{4}', block):
+            block_clean = re.sub(r'\([^)]*\)', ' ', block).strip()
+            block_clean = re.sub(r'\s+', ' ', block_clean).strip()
+            results.append({'gender': 'P', 'age': '1865', 'targeting': f'P1865+{block_clean}', 'note': 'A'})
+            continue
+        # 이미 성별연령+타겟팅 형식
         already_formatted = re.match(r'^([PMF])(\d{4})\+(.+)$', block)
         if already_formatted:
             gender = already_formatted.group(1)
             age    = already_formatted.group(2)
-            code   = already_formatted.group(3).strip()
-            # 괄호 포함된 부연 설명 제거 후 키워드만 추출
-            code = re.sub(r'\([^)]*\)', '', code).strip().rstrip('+').strip()
-            if not code:  # 괄호 제거 후 비어있으면 스킵
+            code   = re.sub(r'\([^)]*\)', '', already_formatted.group(3)).strip().rstrip('+').strip()
+            if not code:
                 continue
             results.append({'gender': gender, 'age': age, 'targeting': code, 'note': 'A'})
             continue
-        # 일반 파싱: 성별+연령 추출
-        block_clean = re.sub(r'\([^)]*\)', ' ', block).strip()  # 괄호 → 공백 (내용 보존)
+        # 일반 파싱
+        block_clean = re.sub(r'\([^)]*\)', ' ', block).strip()
         block_clean = re.sub(r'\s+', ' ', block_clean).strip()
         gm = re.search(r'\b([PMF])(\d{4})\b', block_clean)
         if gm:
@@ -100,8 +113,7 @@ def parse_targeting_lines(raw, target_map):
         cleaned = re.sub(r'[PMF]\d{4}\+?', '', block_clean).strip().lstrip('+').strip()
         first_kw = cleaned.split(',')[0].split('_')[0].strip()
         code = target_map.get(first_kw.upper()) or target_map.get(cleaned.upper()) or (first_kw if first_kw else cleaned)
-        targeting_code = f"{gender}{age}+{code}"
-        results.append({'gender': gender, 'age': age, 'targeting': targeting_code, 'note': 'A'})
+        results.append({'gender': gender, 'age': age, 'targeting': f"{gender}{age}+{code}", 'note': 'A'})
     return results if results else [{'gender': 'P', 'age': '1865', 'targeting': 'non', 'note': 'A'}]
 
 def parse_creative_combined(raw):
