@@ -76,7 +76,7 @@ def parse_targeting_lines(raw, target_map):
             results.append({'gender': 'P', 'age': '1865', 'targeting': 'non', 'note': 'A'})
             continue
         # 번호 접두사 제거
-        block = re.sub(r'^\d{1,2}[\.)\]\s*', '', block).strip()
+        block = re.sub(r'^\d{1,2}[\.\)]\s*', '', block).strip()
         if block.startswith('+'):
             continue
         block = re.sub(r'^\*.*', '', block).strip()
