@@ -87,7 +87,7 @@ def parse_targeting_lines(raw, target_map):
         if re.match(r'^\d{4}', block) and not re.match(r'^[PMF]\d{4}', block):
             block_clean = re.sub(r'\([^)]*\)', ' ', block).strip()
             block_clean = re.sub(r'\s+', ' ', block_clean).strip()
-            results.append({'gender': 'P', 'age': '1865', 'targeting': f'P1865+{block_clean}', 'note': 'A'})
+            results.append({'gender': 'P', 'age': '1865', 'targeting': block_clean, 'note': 'A'})
             continue
         # 이미 성별연령+타겟팅 형식
         already_formatted = re.match(r'^([PMF])(\d{4})\+(.+)$', block)
@@ -113,7 +113,7 @@ def parse_targeting_lines(raw, target_map):
         cleaned = re.sub(r'[PMF]\d{4}\+?', '', block_clean).strip().lstrip('+').strip()
         first_kw = cleaned.split(',')[0].split('_')[0].strip()
         code = target_map.get(first_kw.upper()) or target_map.get(cleaned.upper()) or (first_kw if first_kw else cleaned)
-        results.append({'gender': gender, 'age': age, 'targeting': f"{gender}{age}+{code}", 'note': 'A'})
+        results.append({'gender': gender, 'age': age, 'targeting': code, 'note': 'A'})
     return results if results else [{'gender': 'P', 'age': '1865', 'targeting': 'non', 'note': 'A'}]
 
 def parse_creative_combined(raw):
