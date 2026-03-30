@@ -49,84 +49,116 @@ def get_device_code(d):
 def parse_targeting_lines(raw, target_map):
     if not raw or raw in ('-', 'NonTargeting', 'Non-Targeting', 'nan'):
         return [{'gender': 'P', 'age': '1865', 'targeting': 'non', 'note': 'A'}]
-    t = raw.replace('\n', ' ').strip()
-    t_masked = re.sub(r'\([^)]*\)', lambda m: '(' + 'X' * len(m.group()[1:-1]) + ')', t)
-    split_indices = [0]
-    for m in re.finditer(r'(?<!\d)\s*(?=\d{1,2}[\.\)](?!\d))', t_masked):
-        if m.start() > 0: split_indices.append(m.start())
-    split_indices.append(len(t))
-    parts = []
-    for i in range(len(split_indices) - 1):
-        chunk = t[split_indices[i]:split_indices[i+1]].strip()
-        chunk = re.sub(r'^\d{1,2}[\.\)]\s*', '', chunk).strip()
-        if chunk: parts.append(chunk)
-    if not parts: parts = [t]
+    # 구분 기준: 줄바꿈(\n) 기준으로 각 타겟팅 항목 분리
+    blocks = re.split(r'\n', raw.strip())
+    if not blocks or blocks == ['']:
+        blocks = [raw.strip()]
     results = []
-    for item in parts:
-        gm = re.search(r'\b([PMF])(\d{4})\b', item)
-        if gm: gender, age = gm.group(1), gm.group(2)
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        # 번호 접두사 제거 (1. 2) 등)
+        block = re.sub(r'^\d{1,2}[\.\)]\s*', '', block).strip()
+        block = re.sub(r'\([^)]*\)', '', block).strip()
+        block = re.sub(r'^\[타겟팅\]\s*', '', block).strip()
+        # 성별+연령 추출
+        gm = re.search(r'\b([PMF])(\d{4})\b', block)
+        if gm:
+            gender, age = gm.group(1), gm.group(2)
         else:
-            gm2 = re.search(r'\b([PMF])\b', item)
+            gm2 = re.search(r'\b([PMF])\b', block)
             gender = gm2.group(1) if gm2 else 'P'
-            am2 = re.search(r'\b(\d{4})\b', item)
+            am2 = re.search(r'\b(\d{4})\b', block)
             age = am2.group(1) if am2 else '1865'
-        cleaned = re.sub(r'[PMF]\d{4}\+?', '', item).strip().lstrip('+').strip()
-        cleaned = re.sub(r'\([^)]*\)', '', cleaned).strip()
-        cleaned = re.sub(r'^\[타겟팅\]\s*', '', cleaned).strip()
+        # 타겟팅 키워드: 성별/연령 제거 후 첫 번째 키워드
+        cleaned = re.sub(r'[PMF]\d{4}\+?', '', block).strip().lstrip('+').strip()
         first_kw = cleaned.split(',')[0].split('_')[0].strip()
         code = target_map.get(first_kw.upper()) or target_map.get(cleaned.upper()) or (first_kw if first_kw else cleaned)
-        results.append({'gender': gender, 'age': age, 'targeting': code, 'note': 'A'})
-    return results
+        # M열 출력 형식: 성별연령+타겟팅 (예: P1865+non)
+        targeting_code = f"{gender}{age}+{code}"
+        results.append({'gender': gender, 'age': age, 'targeting': targeting_code, 'note': 'A'})
+    return results if results else [{'gender': 'P', 'age': '1865', 'targeting': 'P1865+non', 'note': 'A'}]
 
 def parse_creative_combined(raw):
     """
     G열 Creative에서 소재명 + 가로세로 + 초수 모두 추출
     소재명 컬럼(H열)이 없을 때 사용
+    구분 기준: 빈 줄(한 줄 띄어쓰기)
     """
     if not raw or raw in ('-', 'nan', ''):
-        return [{'name': '', 'orientation': 'H', 'seconds': ''}]
-    lines = [l.strip() for l in raw.replace('\\n', '\n').split('\n')
-             if l.strip() and l.strip() != '-']
-    expanded = []
-    for line in lines:
-        if '가로/세로' in line or '세로/가로' in line:
-            expanded.append(line.replace('가로/세로', '가로').replace('세로/가로', '가로'))
-            expanded.append(line.replace('가로/세로', '세로').replace('세로/가로', '세로'))
-        else:
-            expanded.append(line)
+        return [{'name': 'Image', 'orientation': 'H', 'seconds': 'Image'}]
+    # 빈 줄 기준으로 블록 분리
+    blocks = re.split(r'\n', raw.strip())
+    if not blocks or blocks == ['']:
+        blocks = [raw.strip()]
     results = []
-    for line in expanded:
-        sec_m = re.search(r'(\d+)[\'\'""""]', line)
-        seconds = sec_m.group(1) if sec_m else ''
-        orientation = 'V' if ('세로' in line or 'Vertical' in line or 'vertical' in line) else 'H'
-        name = line
-        name = re.sub(r'\d+[\'\'""""]', '', name)
-        name = re.sub(r'\([^)]*\)', '', name)
-        name = re.sub(r'가로/?세로|세로/?가로|세로|가로', '', name)
-        name = re.sub(r'\s+', ' ', name).strip().strip('&').strip('-').strip()
-        results.append({'name': name, 'orientation': orientation, 'seconds': seconds})
-    return results or [{'name': '', 'orientation': 'H', 'seconds': ''}]
+    for block in blocks:
+        block = block.strip()
+        if not block or block == '-':
+            continue
+        # 가로/세로 표기 → 두 줄로 확장
+        if '가로/세로' in block or '세로/가로' in block:
+            lines = [
+                block.replace('가로/세로', '가로').replace('세로/가로', '가로'),
+                block.replace('가로/세로', '세로').replace('세로/가로', '세로'),
+            ]
+        else:
+            lines = [block]
+        for line in lines:
+            sec_m = re.search(r'(\d+)[\'\'""""]', line)
+            seconds = sec_m.group(1) if sec_m else 'Image'
+            has_h = '가로' in line or 'horizontal' in line.lower()
+            has_v = '세로' in line or 'vertical' in line.lower()
+            if has_h and has_v:
+                orientation = 'HV'
+            elif has_v:
+                orientation = 'V'
+            else:
+                orientation = 'H'
+            # 소재명: 초수/가로세로/괄호 제거
+            name = re.sub(r'\d+[\'\'""""]', '', line)
+            name = re.sub(r'\([^)]*\)', '', name)
+            name = re.sub(r'가로/?세로|세로/?가로|세로|가로', '', name)
+            name = re.sub(r'\s+', ' ', name).strip().strip('&').strip('-').strip()
+            # Q열 출력 형식: 소재_가로세로_초수
+            display = f"{name}_{orientation}_{seconds}"
+            results.append({'name': display, 'orientation': orientation, 'seconds': seconds})
+    return results or [{'name': 'Image_H_Image', 'orientation': 'H', 'seconds': 'Image'}]
 
 def parse_creative_format_only(raw):
-    """G열 Creative에서 가로세로 + 초수만 추출 (소재명은 H열에서 따로 가져올 때)"""
+    """G열 Creative에서 가로세로 + 초수만 추출 (소재명은 H열에서 따로 가져올 때)
+    구분 기준: 빈 줄(한 줄 띄어쓰기)
+    """
     if not raw or raw in ('-', 'nan', ''):
-        return [{'orientation': 'H', 'seconds': ''}]
-    lines = [l.strip() for l in raw.replace('\\n', '\n').split('\n')
-             if l.strip() and l.strip() != '-']
+        return [{'orientation': 'H', 'seconds': 'Image'}]
+    blocks = re.split(r'\n', raw.strip())
+    if not blocks or blocks == ['']:
+        blocks = [raw.strip()]
     expanded = []
-    for line in lines:
-        if '가로/세로' in line or '세로/가로' in line:
-            expanded.append(line.replace('가로/세로', '가로').replace('세로/가로', '가로'))
-            expanded.append(line.replace('가로/세로', '세로').replace('세로/가로', '세로'))
+    for block in blocks:
+        block = block.strip()
+        if not block or block == '-':
+            continue
+        if '가로/세로' in block or '세로/가로' in block:
+            expanded.append(block.replace('가로/세로', '가로').replace('세로/가로', '가로'))
+            expanded.append(block.replace('가로/세로', '세로').replace('세로/가로', '세로'))
         else:
-            expanded.append(line)
+            expanded.append(block)
     results = []
     for line in expanded:
         sec_m = re.search(r'(\d+)[\'\'""""]', line)
-        seconds = sec_m.group(1) if sec_m else ''
-        orientation = 'V' if ('세로' in line or 'Vertical' in line or 'vertical' in line) else 'H'
+        seconds = sec_m.group(1) if sec_m else 'Image'
+        has_h = '가로' in line or 'horizontal' in line.lower()
+        has_v = '세로' in line or 'vertical' in line.lower()
+        if has_h and has_v:
+            orientation = 'HV'
+        elif has_v:
+            orientation = 'V'
+        else:
+            orientation = 'H'
         results.append({'orientation': orientation, 'seconds': seconds})
-    return results or [{'orientation': 'H', 'seconds': ''}]
+    return results or [{'orientation': 'H', 'seconds': 'Image'}]
 
 def parse_creative_names(raw):
     """H열 소재명 컬럼 파싱 (날짜 패턴이면 빈칸)"""
@@ -286,7 +318,8 @@ def build_code_rows(actual, date_code, camp, cname,
             fmt_list  = parse_creative_format_only(cr_raw)
             name_list = parse_creative_names(cr_name)
             creative_list = [
-                {'name': n, 'orientation': f['orientation'], 'seconds': f['seconds']}
+                # Q열 출력 형식: 소재_가로세로_초수
+                {'name': f"{n}_{f['orientation']}_{f['seconds']}", 'orientation': f['orientation'], 'seconds': f['seconds']}
                 for f in fmt_list for n in name_list
             ]
         else:
@@ -459,7 +492,7 @@ def write_excel(tool_bytes, code_rows):
         ('D', f"Product!$C$2:$C${product_last}", '상품명'),
         ('K', '"P,M,F"',                            '성별'),
         ('P', '"A,P,M,C"',                          'Device'),
-        ('R', '"H,V"',                              '가로세로'),
+        ('R', '"H,V,HV"',                             '가로세로'),
     ]
     total_rows = 10 + len(code_rows) - 1
     for col_letter, formula, _ in dv_configs:
