@@ -392,9 +392,9 @@ def write_excel(tool_bytes, code_rows):
         r    = 10 + i
         fill = miss_fill if d['missing'] else ok_fill
 
-        # A열: 미매핑 플래그 (1=미매핑, 0=정상) — 숨김 처리, 조건부서식 기준으로 사용
-        flag_cell = ws.cell(row=r, column=1, value=1 if d['missing'] else 0)
-        flag_cell.fill = ok_fill
+        # A열: 미매핑 플래그 수식 — G열(매체코드) OR H열(상품코드)이 비어있으면 1, 둘 다 채워지면 0
+        # 수식으로 처리해야 사용자가 C/D열 값 수정 시 자동으로 반응함
+        flag_cell = ws.cell(row=r, column=1, value=f'=IF(OR(G{r}="",H{r}=""),1,0)')
 
         # 값 기입 (B, C, D, E, K, L, M, N, P, Q, R, S, T)
         value_map = {
