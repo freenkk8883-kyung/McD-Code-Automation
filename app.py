@@ -48,33 +48,47 @@ def get_device_code(d):
 
 def parse_targeting_lines(raw, target_map):
     if not raw or raw in ('-', 'NonTargeting', 'Non-Targeting', 'nan'):
-        return [{'gender': 'P', 'age': '1865', 'targeting': 'P1865+non', 'note': 'A'}]
+        return [{'gender': 'P', 'age': '1865', 'targeting': 'non', 'note': 'A'}]
     # 구분 기준: 줄바꿈(\n) 기준으로 각 타겟팅 항목 분리
-    blocks = re.split(r'\n', raw.strip())
-    if not blocks or blocks == ['']:
-        blocks = [raw.strip()]
+    # 단, 다음 줄이 '('로 시작하면 이전 줄의 연속으로 합침 (예: Time\n(14:00~14:59))
+    raw_lines = raw.strip().split('\n')
+    merged = []
+    for line in raw_lines:
+        if line.strip().startswith('(') and merged:
+            merged[-1] = merged[-1] + ' ' + line.strip()
+        else:
+            merged.append(line)
+    blocks = merged
     results = []
     for block in blocks:
         block = block.strip()
         if not block:
             continue
-        # 번호 접두사 제거 (1. 2) 등)
+        # 번호 접두사 제거 (1. 1) 등)
         block = re.sub(r'^\d{1,2}[\.\)]\s*', '', block).strip()
-        block = re.sub(r'^\*.*', '', block).strip()  # * 로 시작하는 주석 제거
+        # + 로 시작하는 부연 설명 줄 제거 (예: "+2024-2025 McCrispy Re-targeting")
+        if block.startswith('+'):
+            continue
+        block = re.sub(r'^\*.*', '', block).strip()   # * 주석 제거
         block = re.sub(r'^\[타겟팅\]\s*', '', block).strip()
         if not block:
             continue
-        # 이미 '성별연령+타겟팅' 형식이면 → 성별/연령은 K/L열용으로 추출, M열엔 타겟팅 키워드만
-        # 예: "P1844+Sports Select" → gender=P, age=1844, targeting="Sports Select"
+        # 이미 '성별연령+타겟팅' 형식인지 확인
+        # 단, 성별(P/M/F) + 정확히 4자리 숫자 + + 로 시작해야 함
         already_formatted = re.match(r'^([PMF])(\d{4})\+(.+)$', block)
         if already_formatted:
             gender = already_formatted.group(1)
             age    = already_formatted.group(2)
             code   = already_formatted.group(3).strip()
+            # 괄호 포함된 부연 설명 제거 후 키워드만 추출
+            code = re.sub(r'\([^)]*\)', '', code).strip().rstrip('+').strip()
+            if not code:  # 괄호 제거 후 비어있으면 스킵
+                continue
             results.append({'gender': gender, 'age': age, 'targeting': code, 'note': 'A'})
             continue
         # 일반 파싱: 성별+연령 추출
-        block_clean = re.sub(r'\([^)]*\)', '', block).strip()
+        block_clean = re.sub(r'\([^)]*\)', ' ', block).strip()  # 괄호 → 공백 (내용 보존)
+        block_clean = re.sub(r'\s+', ' ', block_clean).strip()
         gm = re.search(r'\b([PMF])(\d{4})\b', block_clean)
         if gm:
             gender, age = gm.group(1), gm.group(2)
@@ -88,7 +102,7 @@ def parse_targeting_lines(raw, target_map):
         code = target_map.get(first_kw.upper()) or target_map.get(cleaned.upper()) or (first_kw if first_kw else cleaned)
         targeting_code = f"{gender}{age}+{code}"
         results.append({'gender': gender, 'age': age, 'targeting': targeting_code, 'note': 'A'})
-    return results if results else [{'gender': 'P', 'age': '1865', 'targeting': 'P1865+non', 'note': 'A'}]
+    return results if results else [{'gender': 'P', 'age': '1865', 'targeting': 'non', 'note': 'A'}]
 
 def parse_creative_combined(raw):
     """
@@ -130,10 +144,14 @@ def parse_creative_combined(raw):
             name = line
             name = re.sub(r"\d+['\'\"""\"초]", '', name)      # 초수 제거
             name = re.sub(r'\([^)]*\)', '', name)               # 괄호 제거
-            name = re.sub(r'(?<![가-힣])가로/?세로(?![가-힣])|(?<![가-힣])세로/?가로(?![가-힣])|(?<![가-힣])세로(?![가-힣])|(?<![가-힣])가로(?![가-힣])', '', name)  # 방향어 제거
+            name = re.sub(r'(?<![가-힣A-Za-z])가로/?세로(?![가-힣A-Za-z])|(?<![가-힣A-Za-z])세로/?가로(?![가-힣A-Za-z])|(?<![가-힣A-Za-z])세로(?![가-힣A-Za-z])|(?<![가-힣A-Za-z])가로(?![가-힣A-Za-z])', '', name)
             name = re.sub(r'_+', '_', name)                     # 연속 _ 정리
-            name = name.strip('_').strip()                       # 앞뒤 _ 및 공백 제거
+            name = name.strip('_').strip(',').strip()            # 앞뒤 _ , 공백 제거
+            name = re.sub(r',\s*$', '', name).strip()           # 후행 쉼표 제거
             name = re.sub(r'\s+', ' ', name).strip().strip('&').strip('-').strip()
+            # 소재명이 비어있으면 'Image'로 대체
+            if not name:
+                name = 'Image'
             # Q열: 소재명만 / 코드 생성용은 소재_가로세로_초수
             display = f"{name}_{orientation}_{seconds}"
             results.append({'name': name, 'display': display, 'orientation': orientation, 'seconds': seconds})
