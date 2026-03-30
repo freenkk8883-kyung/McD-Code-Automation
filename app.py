@@ -4,7 +4,9 @@ import re
 import io
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Alignment, Font, Protection
-from openpyxl.formatting.rule import FormulaRule
+from openpyxl.formatting.rule import FormulaRule, Rule
+from openpyxl.styles.differential import DifferentialStyle
+from openpyxl.styles import Color
 from openpyxl.worksheet.datavalidation import DataValidation
 from collections import Counter
 
@@ -417,22 +419,23 @@ def write_excel(tool_bytes, code_rows):
             cell.alignment = Alignment(horizontal=align_h, vertical='center', wrap_text=False)
 
     # 조건부서식 설정
-    miss_cf_fill = PatternFill(fill_type='solid', fgColor='FFD7D7')  # 미매핑 행 음영 (연분홍)
-    red_fill     = PatternFill(fill_type='solid', fgColor='FFCCCC')  # 빈칸 음영 (진분홍)
-    total_rows   = 10 + len(code_rows) - 1
+    # openpyxl PatternFill을 FormulaRule에 직접 쓰면 alpha=00(투명)으로 저장되는 버그 있음
+    # → Rule + DifferentialStyle + Color(rgb='FF'+hex) 방식으로 색상 명시
+    def make_rule(formula, hex_color, priority):
+        fill = PatternFill(fill_type='solid',
+                           start_color=Color(rgb='FF' + hex_color),
+                           end_color=Color(rgb='FF' + hex_color))
+        dxf = DifferentialStyle(fill=fill)
+        return Rule(type='expression', formula=[formula], dxf=dxf, priority=priority, stopIfTrue=False)
 
-    # ① B~V열 전체: A열 플래그=1(미매핑)이면 분홍 음영 → A열을 0으로 바꾸면 자동 해제
-    #   (G/H열 XLOOKUP 수식이 미계산 상태라 수식 기반 조건부서식이 동작 안 함 → A열 플래그로 우회)
-    rule_miss = FormulaRule(formula=['$A10=1'], fill=miss_cf_fill, stopIfTrue=False)
-    ws.conditional_formatting.add(f'B10:V{total_rows}', rule_miss)
+    total_rows = 10 + len(code_rows) - 1
 
-    # ② K~N열: 각 셀 기준으로 비어있으면 진분홍 음영 → 값 채우면 자동 해제
-    rule_kn = FormulaRule(formula=['LEN(TRIM(K10))=0'], fill=red_fill, stopIfTrue=False)
-    ws.conditional_formatting.add(f'K10:N{total_rows}', rule_kn)
-
-    # ③ P~T열: 각 셀 기준으로 비어있으면 진분홍 음영 → 값 채우면 자동 해제
-    rule_pt = FormulaRule(formula=['LEN(TRIM(P10))=0'], fill=red_fill, stopIfTrue=False)
-    ws.conditional_formatting.add(f'P10:T{total_rows}', rule_pt)
+    # ① B~V열 전체: A열 플래그=1(미매핑)이면 연분홍 음영 → A열을 0으로 바꾸면 자동 해제
+    ws.conditional_formatting.add(f'B10:V{total_rows}', make_rule('$A10=1',          'FFD7D7', 10))
+    # ② K~N열: 비어있으면 진분홍 음영 → 값 채우면 자동 해제
+    ws.conditional_formatting.add(f'K10:N{total_rows}', make_rule('LEN(TRIM(K10))=0','FFCCCC', 11))
+    # ③ P~T열: 비어있으면 진분홍 음영 → 값 채우면 자동 해제
+    ws.conditional_formatting.add(f'P10:T{total_rows}', make_rule('LEN(TRIM(P10))=0','FFCCCC', 12))
 
     # A열 숨김 처리 (플래그 열, 사용자에게 보이지 않도록)
     ws.column_dimensions['A'].hidden = True
